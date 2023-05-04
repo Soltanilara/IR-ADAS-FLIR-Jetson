@@ -8,6 +8,7 @@ import cv2
 import time
 import os
 import argparse
+import os
 
 import threading
 from queue import Queue
@@ -15,7 +16,12 @@ from queue import Queue
 from utils.power import check_power, shutdown
 from utils.utils import color_box
 
+import PySimpleGUI as sg
+
+import ctypes
+
 import nanocamera as nano # For usb webcams (for testing)
+
 
 _COLORS = color_box(14).astype(np.float32).reshape(-1, 3)
 
@@ -89,75 +95,37 @@ class BaseEngine(object):
 
         data = [out['host'] for out in self.outputs]
         return data
-
-    def detect_video(self, pipeline, end2end=False):
-        cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
-        raw_fps = int(round(cap.get(cv2.CAP_PROP_FPS)))
-
-        conf = 0.1 # HARD CODED conf threshould 
-        power = True
-        pwr_cnt = 0
-
-        while True:
-            ret, frame_raw = cap.read()
-
-            frame_raw = cv2.bitwise_not(frame_raw) # TEMPORARY: Black hot to white hot. Can change from GUI? <-- need to find out 
-            frame = frame_raw
-
-            if not ret:
-                break
-
-            blob, ratio = preproc(frame_raw, self.imgsz, self.mean, self.std)
-            t1 = time.time()
-            data = self.infer(blob)
-            
-
-            if end2end: # Using End-to-End engine
-                num, final_boxes, final_scores, final_cls_inds = data
-                final_boxes = np.reshape(final_boxes/ratio, (-1, 4))
-                dets = np.concatenate([final_boxes[:num[0]], np.array(final_scores)[:num[0]].reshape(-1, 1), np.array(final_cls_inds)[:num[0]].reshape(-1, 1)], axis=-1)
-            else: # nms not included engine
-                predictions = np.reshape(data, (1, -1, int(5+self.n_classes)))[0]
-                dets = self.postprocess(predictions, ratio)
-
-            fps = int(1000 / ((time.time() - t1) * 1000))
-
-            if dets is not None:
-                final_boxes, final_scores, final_cls_inds = dets[:, :4], dets[:, 4], dets[:, 5]
-                frame = vis(frame, final_boxes, final_scores, final_cls_inds, conf=conf, class_names=self.class_names)
-            
-            frame = cv2.putText(frame, "FPS:%d " %fps, (0, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-            cv2.imshow('FLIR IR Video', frame)
-
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
-            power, pwr_cnt = check_power(power, pwr_cnt, raw_fps)
-            if power == False:
-                break
-
-        cap.release()
-        cv2.destroyAllWindows()
-        if power == False:
-            shutdown()
     
-    def detect_video_file(self, video_path, end2end=False):
-        cap = cv2.VideoCapture(0)
+    def detect_video(self, pipeline, window, end2end=False):
+        cv2.namedWindow("FLIR IR Video", cv2.WND_PROP_FULLSCREEN)
+        cv2.setWindowProperty("FLIR IR Video", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN) 
+        if pipeline == 0:
+            cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+        else:
+            cap = cv2.VideoCapture(pipeline)
+        # cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 512)
+        # cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap.set(cv2.CAP_PROP_CONVERT_RGB, 0)
         fps = cap.get(cv2.CAP_PROP_FPS)
         print(fps)
-        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        save_path = f"processed_video/test.mp4"
-        frame_queue = Queue()
-        video_writer_thread = VideoWriterThread(frame_queue, save_path, 9, (w, h))
-        video_writer_thread.start()
+        # w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        # h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        # cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter.fourcc('Y','1','6',' '))
+        
+        # frame_queue = Queue()
+        # video_writer_thread = VideoWriterThread(frame_queue, save_path, 9, (w, h))
+        # video_writer_thread.start()
 
-        raw_fps = int(round(cap.get(cv2.CAP_PROP_FPS)))
+        raw_fps = 9 
 
-        conf = 0.5 # HARD CODED conf threshould 
         power = True
         pwr_cnt = 0
 
-        while True:
+        conf = self.conf
+        infer = True
+
+        while True: 
+            screen_width, screen_height = 1920, 1600
             ret, frame = cap.read()
 
             frame_raw = cv2.bitwise_not(frame) # TEMPORARY: Black hot to white hot. Can change from GUI? <-- need to find out 
@@ -170,43 +138,67 @@ class BaseEngine(object):
             t1 = time.time()
             data = self.infer(blob)
             
+            if infer:
+                if end2end: # Using End-to-End engine
+                    num, final_boxes, final_scores, final_cls_inds = data
+                    final_boxes = np.reshape(final_boxes/ratio, (-1, 4))
+                    dets = np.concatenate([final_boxes[:num[0]], np.array(final_scores)[:num[0]].reshape(-1, 1), np.array(final_cls_inds)[:num[0]].reshape(-1, 1)], axis=-1)
+                else: # nms not included engine
+                    predictions = np.reshape(data, (1, -1, int(5+self.n_classes)))[0]
+                    dets = self.postprocess(predictions, ratio)
 
-            if end2end: # Using End-to-End engine
-                num, final_boxes, final_scores, final_cls_inds = data
-                final_boxes = np.reshape(final_boxes/ratio, (-1, 4))
-                dets = np.concatenate([final_boxes[:num[0]], np.array(final_scores)[:num[0]].reshape(-1, 1), np.array(final_cls_inds)[:num[0]].reshape(-1, 1)], axis=-1)
-            else: # nms not included engine
-                predictions = np.reshape(data, (1, -1, int(5+self.n_classes)))[0]
-                dets = self.postprocess(predictions, ratio)
+                if dets is not None:
+                    final_boxes, final_scores, final_cls_inds = dets[:, :4], dets[:, 4], dets[:, 5]
+                    print(final_cls_inds)
+                    frame = vis(frame, final_boxes, final_scores, final_cls_inds, conf=conf, class_names=self.class_names)
 
-            
-
-            if dets is not None:
-                final_boxes, final_scores, final_cls_inds = dets[:, :4], dets[:, 4], dets[:, 5]
-                print(final_cls_inds)
-                frame = vis(frame, final_boxes, final_scores, final_cls_inds, conf=conf, class_names=self.class_names)
-
-            frame_queue.put(frame)
+            # frame_queue.put(frame)
             calc_fps = int(1000 / ((time.time() - t1) * 1000))
 
-            view_frame = cv2.putText(frame, f"FPS:{calc_fps}", (0, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+            # frame = cv2.putText(frame, f"FPS:{calc_fps}", (0, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+
+
+            frame_height, frame_width, _ = frame.shape
+
+            scaleWidth = float(screen_width)/float(frame_width)
+            scaleHeight = float(screen_height)/float(frame_height)
+
+            if scaleHeight>scaleWidth:
+                imgScale = scaleWidth
+
+            else:
+                imgScale = scaleHeight
+
+            newX,newY = frame.shape[1]*imgScale, frame.shape[0]*imgScale
+            frame = cv2.resize(frame,(int(newX),int(newY)))
+            # imgbytes = cv2.imencode('.png', frame)[1].tobytes()
+            # img_elem.Update(data=imgbytes)
+            # imgbytes = cv2.imencode('.ppm', frame)[1].tobytes()
+            # img_elem.draw_image(data=imgbytes, location=(0, 1080))
             cv2.imshow('FLIR IR Video', frame)
 
-            if cv2.waitKey(1) & 0xFF == ord('q'):
+            event, values = window.read(timeout=0)
+            conf[0] = values['_PEOPLE_']
+            conf[2] = values['_CAR_']
+            infer_temp = values['_INFER_']
+            if infer_temp != infer:
+                if infer_temp == True:
+                    sg.popup_timed('Inference Mode', button_type=5, auto_close=True, auto_close_duration=3, non_blocking=True, no_titlebar=True, background_color='green', text_color='white')
+                else:
+                    sg.popup_timed('Raw Video Mode', button_type=5, auto_close=True, auto_close_duration=3, non_blocking=True, no_titlebar=True, background_color='green', text_color='white')
+                infer = infer_temp 
+            window.TKroot.wm_attributes("-topmost", True)
+            if cv2.waitKey(1) & 0xFF == ord('q') or event == 'Exit' or event == None:
                 break
             power, pwr_cnt = check_power(power, pwr_cnt, raw_fps)
             if power == False:
                 break
-
-        frame_queue.put(None)
-        video_writer_thread.join()
 
         cap.release()
         cv2.destroyAllWindows()
         if power == False:
             shutdown()
 
-        
 
     @staticmethod
     def postprocess(predictions, ratio):
@@ -294,17 +286,17 @@ def preproc(image, input_size, mean, std, swap=(2, 0, 1)):
     return padded_img, r
 
 def vis(img, boxes, scores, cls_ids, conf, class_names=None):
-    conf_all = conf
+    # conf_all = conf
     for i in range(len(boxes)):
         box = boxes[i]
         cls_id = int(cls_ids[i])
         score = scores[i]
-        if cls_id == 0:
-            conf = 0.1
-        else:
-            conf = conf_all
+        # if cls_id == 0:
+        #     conf = 0.1
+        # else:
+        #     conf = conf_all
 
-        if score < conf:
+        if score < conf[cls_id]:
             continue
 
         x0 = int(box[0])
@@ -350,20 +342,55 @@ class Detector(BaseEngine):
             'deer', 
             'other vehicle'
             ]
+        
+        self.conf = {
+            0:0.4,
+            1:0.65,
+            2:0.65,
+            3:0.65,
+            4:0.65,
+            5:0.65,
+            6:0.65,
+            7:0.65,
+            8:0.65,
+            9:0.65
+        }
 
 if __name__ == '__main__':
+    sg.theme('DarkGrey4')
+    sg.set_options(font=('Arial Bold', 16))
+    layout = [
+                # [sg.Graph((1920, 1080), (0,0), (1920, 1080), key='_IMAGE_')],
+                # [sg.Image(data=None, size=(640, 512), key='_IMAGE_')],
+                # [sg.Radio("Inference", "infer", key='_INFER_', default=True)],
+                [sg.Checkbox('Inference', default=True, size=(15, 15), key='_INFER_')],
+                [sg.Text('People'),
+                sg.Slider(range=(0.01, 1), orientation='h', resolution=0.01, default_value=0.4, size=(20, 20), key='_PEOPLE_')],
+                [sg.Text('Car'),
+                sg.Slider(range=(0.01, 1), orientation='h', resolution=0.01, default_value=0.65, size=(20, 20), key='_CAR_')],
+                # [sg.Button('Fullscreen', size=(8, 1), key='_FULL_')],
+                [sg.Exit()]
+            ]
+
+
     parser = argparse.ArgumentParser()
     parser.add_argument("-e", "--engine", required=True, help="TRT engine (from weights directory)")
     parser.add_argument("--end2end", default=False, action="store_true", help="use end2end engine")
-
     args = parser.parse_args()
     print(args)
-    engine_path = f'engines/{args.engine}'
+
+    # sg.popup_notify('Loading ADAS')
+    sg.popup_timed('Launching IR-ADAS Software', button_type=5, auto_close=True, auto_close_duration=10, no_titlebar=True, background_color='red', text_color='white')
+    engine_path = f'/home/jetson/ir-adas/IR-ADAS-FLIR-Jetson/jetson_nano/engines/{args.engine}'
+
+    window = sg.Window('IR-ADAS Development Console', layout, size = (360, 300) , default_element_size=(14, 1), text_justification='left', auto_size_text=False, keep_on_top=True, finalize=True)
+    # img_elem = window['_IMAGE_'] 
 
     pred = Detector(engine_path=engine_path)
 
-    # pipeline = "v4l2src device=/dev/video0 ! video/x-raw,format=(string)I420, interlace-mode=(string)progressive, framerate=60/1 ! videoconvert ! appsink"
-    # pipeline = 0
-    # pred.detect_video(pipeline, end2end=args.end2end)
-    video_path = "test3_3min.mp4"
-    pred.detect_video_file(video_path, end2end=args.end2end)
+    # pipeline = "v4l2src device=/dev/video0 ! video/x-raw,format=(string)I420, interlace-mode=(string)progressive, framerate=30/1 ! videoconvert ! appsink"
+    pipeline = 0
+    # #pipeline = "v4l2src device=/dev/video0 ! video/x-raw, width=640, height=512, format=(string)I420, pixel-aspect-ratio=1/1, interlace-mode=(string)progressive, framerate=60/1 ! videoconvert ! appsink"
+    pred.detect_video(pipeline, window, end2end=args.end2end)
+    # video_path = "test3_3min.mp4"
+    # pred.detect_video(video_path, window, end2end=args.end2end)

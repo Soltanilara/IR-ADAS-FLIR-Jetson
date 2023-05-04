@@ -31,7 +31,7 @@ $ source ~/.bashrc
 
 #### Command to convert .onnx to .trt
 ```sh
-$ \usr\src\tensorrt\bin\trtexec --onnx=baseline.onnx --saveEngine=baseline.trt --fp16
+$ \usr\src\tensorrt\bin\trtexec --onnx=baseline.onnx --saveEngine=baseline.trt --fp16 --verbose
 ```
 
 ## Inference on Jetson Nano

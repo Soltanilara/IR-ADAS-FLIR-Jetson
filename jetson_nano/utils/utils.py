@@ -3,7 +3,11 @@ import numpy as np
 
 def color_box(size=50):
     cmap = plt.get_cmap('jet')
-    color_list = []
+    color_list = [
+	[0,1,0], 
+	[1, 1, 0],
+	[0, 0, 1]	
+	]
 
     for n in range(size):
         color = cmap(n/size)

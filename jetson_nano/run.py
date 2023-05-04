@@ -70,9 +70,14 @@ class BaseEngine(object):
 
     def detect_video(self, pipeline, end2end=False):
         cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        save_path = f"processed_video/{'test.mp4'}"
+        vid_writer = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
         raw_fps = int(round(cap.get(cv2.CAP_PROP_FPS)))
 
-        conf = 0.5 # HARD CODED conf threshould 
+        conf = 0.65 # HARD CODED conf threshould 
         power = True
         pwr_cnt = 0
 
@@ -98,13 +103,16 @@ class BaseEngine(object):
                 predictions = np.reshape(data, (1, -1, int(5+self.n_classes)))[0]
                 dets = self.postprocess(predictions, ratio)
 
-            fps = int(1000 / ((time.time() - t1) * 1000))
+            
 
             if dets is not None:
                 final_boxes, final_scores, final_cls_inds = dets[:, :4], dets[:, 4], dets[:, 5]
                 frame = vis(frame, final_boxes, final_scores, final_cls_inds, conf=conf, class_names=self.class_names)
+
+            # vid_writer.write(frame)
+            fps = int(1000 / ((time.time() - t1) * 1000))
+            view_frame = cv2.putText(frame, f"FPS:{fps} ", (0, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
             
-            view_frame = cv2.putText(frame, "FPS:%d " %fps, (0, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
             cv2.imshow('FLIR IR Video', frame)
 
             if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -221,7 +229,7 @@ def vis(img, boxes, scores, cls_ids, conf, class_names=None):
 
         color = (_COLORS[cls_id] * 255).astype(np.uint8).tolist()
 
-        bracket_thickness = 3
+        bracket_thickness = 2
         bracket_length = int(0.2 * (y1 - y0))
 
         cv2.line(img, (x0, y0), (x0, y1), color, bracket_thickness)
